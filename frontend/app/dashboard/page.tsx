@@ -14,6 +14,7 @@ type Task = {
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+const AUTH_KEY = "todo_user_id";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -26,7 +27,6 @@ export default function DashboardPage() {
   const [newDesc, setNewDesc] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // 🔔 Toast state
   const [toast, setToast] = useState<string | null>(null);
   const showToast = (msg: string) => {
     setToast(msg);
@@ -40,8 +40,9 @@ export default function DashboardPage() {
     return { total, completed, pending };
   }, [tasks]);
 
+  // ✅ Require sign-in for dashboard
   useEffect(() => {
-    const id = localStorage.getItem("todo_user_id");
+    const id = localStorage.getItem(AUTH_KEY);
     if (!id) {
       router.replace("/signin");
       return;
@@ -99,10 +100,9 @@ export default function DashboardPage() {
   };
 
   const deleteTask = async (taskId: number) => {
-    const res = await fetch(
-      `${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}`,
-      { method: "DELETE" }
-    );
+    const res = await fetch(`${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}`, {
+      method: "DELETE",
+    });
     if (res.ok) {
       await fetchTasks(userId);
       showToast("🗑️ Task deleted");
@@ -110,14 +110,13 @@ export default function DashboardPage() {
   };
 
   const signOut = () => {
-    localStorage.removeItem("todo_user_id");
+    localStorage.removeItem(AUTH_KEY);
     router.push("/signin");
   };
 
   return (
     <main className="min-h-screen bg-[#0b0f14] px-4 py-10">
       <div className="mx-auto w-full max-w-6xl">
-        {/* Top Bar */}
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold text-[#f5c16c]">My Tasks</h1>
@@ -134,14 +133,12 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <StatCard label="Total Tasks" value={totals.total} color="text-white" />
           <StatCard label="Completed" value={totals.completed} color="text-green-400" />
           <StatCard label="Pending" value={totals.pending} color="text-orange-400" />
         </div>
 
-        {/* Create Task */}
         <div className="bg-[#121821] rounded-2xl p-6 border border-[#1f2937] mb-8">
           <h2 className="text-white font-semibold text-lg mb-4">New Task</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -167,7 +164,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Tasks List */}
         <div className="space-y-4">
           {loading ? (
             <div className="text-gray-400">Loading tasks...</div>
@@ -193,9 +189,7 @@ export default function DashboardPage() {
                     <h3 className={t.completed ? "text-gray-400 line-through" : "text-white font-semibold"}>
                       {t.title}
                     </h3>
-                    {t.description && (
-                      <p className="text-sm text-gray-400 mt-1">{t.description}</p>
-                    )}
+                    {t.description && <p className="text-sm text-gray-400 mt-1">{t.description}</p>}
                   </div>
                 </div>
 
@@ -224,7 +218,6 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 🔔 Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 rounded-xl border border-[#1f2937] bg-[#121821] px-4 py-3 text-sm text-gray-100 shadow-2xl">
           {toast}
@@ -234,15 +227,7 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
     <div className="bg-[#121821] rounded-2xl p-6 border border-[#1f2937]">
       <p className="text-gray-400 text-sm">{label}</p>
