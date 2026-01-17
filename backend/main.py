@@ -5,6 +5,7 @@ from sqlmodel import SQLModel
 from app.database import engine
 from app import models  # noqa
 from app.router.tasks import router as tasks_router
+from app.router.chat import router as chat_router
 
 app = FastAPI(title="Hackathon Todo API")
 
@@ -25,6 +26,7 @@ def on_startup():
     SQLModel.metadata.create_all(engine)
 
 app.include_router(tasks_router)
+app.include_router(chat_router)
 
 @app.get("/health")
 def health():
