@@ -13,7 +13,10 @@ type Task = {
   updated_at: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE?.trim() ||
+    "https://mehreenasghar5-todo-fastapi-backend.hf.space").replace(/\/+$/, "");
+
 const AUTH_KEY = "todo_user_id";
 
 export default function DashboardPage() {
@@ -33,14 +36,6 @@ export default function DashboardPage() {
     setTimeout(() => setToast(null), 2000);
   };
 
-  const totals = useMemo(() => {
-    const total = tasks.length;
-    const completed = tasks.filter((t) => t.completed).length;
-    const pending = total - completed;
-    return { total, completed, pending };
-  }, [tasks]);
-
-  // ✅ Require sign-in for dashboard
   useEffect(() => {
     const id = localStorage.getItem(AUTH_KEY);
     if (!id) {
@@ -52,12 +47,16 @@ export default function DashboardPage() {
 
   const fetchTasks = async (id: string) => {
     setLoading(true);
-    const res = await fetch(`${API_BASE}/api/${encodeURIComponent(id)}/tasks/`, {
-      cache: "no-store",
-    });
-    const data = await res.json();
-    setTasks(Array.isArray(data) ? data : []);
-    setLoading(false);
+    try {
+      const url = `${API_BASE}/api/${encodeURIComponent(id)}/tasks/`;
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json();
+      setTasks(Array.isArray(data) ? data : []);
+    } catch {
+      setTasks([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -66,46 +65,60 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  const totals = useMemo(() => {
+    const total = tasks.length;
+    const completed = tasks.filter((t) => t.completed).length;
+    return { total, completed, pending: total - completed };
+  }, [tasks]);
+
   const createTask = async () => {
     if (!newTitle.trim()) return;
 
     setCreating(true);
-    const res = await fetch(`${API_BASE}/api/${encodeURIComponent(userId)}/tasks/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: newTitle.trim(),
-        description: newDesc.trim() || null,
-      }),
-    });
+    try {
+      const url = `${API_BASE}/api/${encodeURIComponent(userId)}/tasks/`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          description: newDesc.trim() || null,
+        }),
+      });
 
-    if (res.ok) {
-      setNewTitle("");
-      setNewDesc("");
-      await fetchTasks(userId);
-      showToast("✅ Task added");
+      if (res.ok) {
+        setNewTitle("");
+        setNewDesc("");
+        await fetchTasks(userId);
+        showToast("✅ Task added");
+      } else {
+        showToast("❌ Add failed");
+      }
+    } finally {
+      setCreating(false);
     }
-    setCreating(false);
   };
 
   const toggleComplete = async (taskId: number) => {
-    const res = await fetch(
-      `${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}/complete`,
-      { method: "PATCH" }
-    );
+    // IMPORTANT: backend swagger shows /complete (no trailing slash). Keep consistent.
+    const url = `${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}/complete`;
+    const res = await fetch(url, { method: "PATCH" });
     if (res.ok) {
       await fetchTasks(userId);
       showToast("✅ Status updated");
+    } else {
+      showToast("❌ Update failed");
     }
   };
 
   const deleteTask = async (taskId: number) => {
-    const res = await fetch(`${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}`, {
-      method: "DELETE",
-    });
+    const url = `${API_BASE}/api/${encodeURIComponent(userId)}/tasks/${taskId}`;
+    const res = await fetch(url, { method: "DELETE" });
     if (res.ok) {
       await fetchTasks(userId);
       showToast("🗑️ Task deleted");
+    } else {
+      showToast("❌ Delete failed");
     }
   };
 
