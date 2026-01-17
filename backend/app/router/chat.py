@@ -1,110 +1,108 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
-
-from app.database import engine
+from app.database import get_session
 from app.models import Task
 
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(prefix="/api/{user_id}/chat", tags=["chat"])
 
 
-class ChatIn(BaseModel):
-    message: str
+@router.post("")
+def chat(user_id: str, payload: dict, session: Session = Depends(get_session)):
+    msg = (payload.get("message") or "").strip()
 
+    if not msg:
+        raise HTTPException(status_code=400, detail="message is required")
 
-def _norm(s: str) -> str:
-    return (s or "").strip().lower()
+    text = msg.lower()
 
+    # ---------- LIST ----------
+    if text == "list":
+        tasks = session.exec(select(Task).where(Task.user_id == user_id)).all()
+        if not tasks:
+            return {"reply": "No tasks found."}
 
-def _get_tasks(session: Session, user_id: str):
-    stmt = select(Task).where(Task.user_id == user_id)
-    return session.exec(stmt).all()
+        lines = []
+        for t in tasks:
+            status = "✅" if t.completed else "⬜"
+            lines.append(f"{status} {t.id}: {t.title}")
+        return {"reply": "\n".join(lines)}
 
+    # ---------- PENDING ----------
+    if text == "pending":
+        tasks = session.exec(
+            select(Task).where(Task.user_id == user_id, Task.completed == False)
+        ).all()
+        if not tasks:
+            return {"reply": "No pending tasks."}
+        return {"reply": "\n".join([f"⬜ {t.id}: {t.title}" for t in tasks])}
 
-@router.post("/{user_id}/chat")
-def chat_handler(user_id: str, payload: ChatIn):
-    msg = _norm(payload.message)
+    # ---------- COMPLETED ----------
+    if text == "completed":
+        tasks = session.exec(
+            select(Task).where(Task.user_id == user_id, Task.completed == True)
+        ).all()
+        if not tasks:
+            return {"reply": "No completed tasks."}
+        return {"reply": "\n".join([f"✅ {t.id}: {t.title}" for t in tasks])}
 
-    with Session(engine) as session:
-        # LIST
-        if msg in ["list", "tasks", "list tasks", "show tasks", "all tasks"]:
-            tasks = _get_tasks(session, user_id)
-            if not tasks:
-                return {"reply": "No tasks found."}
-            lines = [f"{t.id} | {'✅' if t.completed else '⏳'} | {t.title}" for t in tasks]
-            return {"reply": "Tasks:\n" + "\n".join(lines)}
-
-        # PENDING
-        if msg in ["pending", "pending tasks", "show pending"]:
-            tasks = [t for t in _get_tasks(session, user_id) if not t.completed]
-            if not tasks:
-                return {"reply": "No pending tasks."}
-            lines = [f"{t.id} | ⏳ | {t.title}" for t in tasks]
-            return {"reply": "Pending:\n" + "\n".join(lines)}
-
-        # COMPLETED
-        if msg in ["completed", "completed tasks", "show completed"]:
-            tasks = [t for t in _get_tasks(session, user_id) if t.completed]
-            if not tasks:
-                return {"reply": "No completed tasks."}
-            lines = [f"{t.id} | ✅ | {t.title}" for t in tasks]
-            return {"reply": "Completed:\n" + "\n".join(lines)}
-
-        # STATS
-        if msg in ["stats", "summary"]:
-            tasks = _get_tasks(session, user_id)
-            total = len(tasks)
-            done = len([t for t in tasks if t.completed])
-            return {"reply": f"Total: {total}, Completed: {done}, Pending: {total - done}"}
-
-        # ADD: add: Title | optional description
-        if msg.startswith("add:") or msg.startswith("add "):
-            raw = payload.message.split(":", 1)[1].strip() if ":" in payload.message else payload.message[4:].strip()
-            title, desc = (raw.split("|", 1) + [""])[:2]
-            title = title.strip()
-            desc = desc.strip() or None
-            if not title:
-                return {"reply": "Add format: add: Title | optional description"}
-
-            task = Task(user_id=user_id, title=title, description=desc)
-            session.add(task)
-            session.commit()
-            session.refresh(task)
-            return {"reply": f"Added: {task.id} | {task.title}"}
-
-        # COMPLETE: complete: <id> (toggle)
-        if msg.startswith("complete:") or msg.startswith("done:"):
-            raw = payload.message.split(":", 1)[1].strip()
-            if not raw.isdigit():
-                return {"reply": "Complete format: complete: <id>"}
-            task = session.get(Task, int(raw))
-            if not task or task.user_id != user_id:
-                return {"reply": "Task not found (id)."}
-            task.completed = not task.completed
-            session.add(task)
-            session.commit()
-            session.refresh(task)
-            return {"reply": f"Toggled: {task.id} | {task.title}"}
-
-        # DELETE: delete: <id>
-        if msg.startswith("delete:") or msg.startswith("remove:"):
-            raw = payload.message.split(":", 1)[1].strip()
-            if not raw.isdigit():
-                return {"reply": "Delete format: delete: <id>"}
-            task = session.get(Task, int(raw))
-            if not task or task.user_id != user_id:
-                return {"reply": "Task not found (id)."}
-            session.delete(task)
-            session.commit()
-            return {"reply": f"Deleted: {raw}"}
-
+    # ---------- STATS ----------
+    if text == "stats":
+        total = session.exec(select(Task).where(Task.user_id == user_id)).all()
+        done = [t for t in total if t.completed]
         return {
-            "reply": (
-                "Commands:\n"
-                "- list / pending / completed\n"
-                "- add: Title | optional description\n"
-                "- complete: <id>\n"
-                "- delete: <id>\n"
-                "- stats"
-            )
+            "reply": f"Total: {len(total)}, Completed: {len(done)}, Pending: {len(total) - len(done)}"
         }
+
+    # ---------- ADD (STRICT) ----------
+    if text.startswith("add:"):
+        content = msg[4:].strip()
+        if not content:
+            return {"reply": "Usage: add: title | optional description"}
+
+        if "|" in content:
+            title, desc = [x.strip() for x in content.split("|", 1)]
+        else:
+            title, desc = content, None
+
+        task = Task(user_id=user_id, title=title, description=desc)
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+
+        return {"reply": f"Added: {task.id}: {task.title}"}
+
+    # ---------- COMPLETE ----------
+    if text.startswith("complete:"):
+        try:
+            task_id = int(text.split(":")[1].strip())
+        except ValueError:
+            return {"reply": "Usage: complete: <id>"}
+
+        task = session.get(Task, task_id)
+        if not task or task.user_id != user_id:
+            return {"reply": "Task not found."}
+
+        task.completed = True
+        session.add(task)
+        session.commit()
+        return {"reply": f"Completed: {task.id}: {task.title}"}
+
+    # ---------- DELETE ----------
+    if text.startswith("delete:"):
+        try:
+            task_id = int(text.split(":")[1].strip())
+        except ValueError:
+            return {"reply": "Usage: delete: <id>"}
+
+        task = session.get(Task, task_id)
+        if not task or task.user_id != user_id:
+            return {"reply": "Task not found."}
+
+        session.delete(task)
+        session.commit()
+        return {"reply": f"Deleted task {task_id}"}
+
+    # ---------- FALLBACK ----------
+    return {
+        "reply": "Not Found. Use commands like: list, add: milk, complete: 1, delete: 1"
+    }
